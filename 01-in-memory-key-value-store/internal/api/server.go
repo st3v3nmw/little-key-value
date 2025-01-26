@@ -45,8 +45,17 @@ func (s *Server) set(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, msg, http.StatusInternalServerError)
 		return
 	}
+	if len(value) == 0 {
+		http.Error(w, "value cannot be empty", http.StatusBadRequest)
+		return
+	}
 
 	key := r.URL.Path[len("/kv/"):]
+	if len(key) == 0 {
+		http.Error(w, "key cannot be empty", http.StatusBadRequest)
+		return
+	}
+
 	err = s.storage.Set(key, string(value))
 	if err != nil {
 		msg := fmt.Sprintf("unable to set key: %v", err)
