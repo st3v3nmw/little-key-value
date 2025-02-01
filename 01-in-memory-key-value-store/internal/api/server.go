@@ -6,7 +6,7 @@ import (
 	"io"
 	"net/http"
 
-	"github.com/st3v3nmw/crafty-key-value/internal/storage"
+	"github.com/st3v3nmw/little-key-value/internal/storage"
 )
 
 // Server represents the key-value server

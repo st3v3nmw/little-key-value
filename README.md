@@ -1,4 +1,4 @@
-# Crafty Key-Value Store
+# Little Key-Value Store
 
 This repository contains code for the _build your own distributed key-value store_ blog series:
 
