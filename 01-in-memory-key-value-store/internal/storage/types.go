@@ -1,7 +1,5 @@
 package storage
 
-import "fmt"
-
 // Storage defines the interface for a generic key-value storage system
 type Storage interface {
 	// Set adds or updates a key-value pair in the storage
@@ -20,5 +18,5 @@ type NotFoundError struct{}
 
 // Error returns a string representation of the error
 func (e *NotFoundError) Error() string {
-	return fmt.Sprintf("key not found")
+	return "key not found"
 }
