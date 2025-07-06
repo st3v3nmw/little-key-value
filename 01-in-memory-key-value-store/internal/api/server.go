@@ -22,6 +22,12 @@ func New() *Server {
 // Serve starts the HTTP server and handles key-value store operations
 func (s *Server) Serve(addr string) error {
 	http.HandleFunc("/kv/", func(w http.ResponseWriter, r *http.Request) {
+		key := r.URL.Path[len("/kv/"):]
+		if len(key) == 0 {
+			http.Error(w, "key cannot be empty", http.StatusBadRequest)
+			return
+		}
+
 		switch r.Method {
 		case http.MethodPut:
 			s.set(w, r)
@@ -51,11 +57,6 @@ func (s *Server) set(w http.ResponseWriter, r *http.Request) {
 	}
 
 	key := r.URL.Path[len("/kv/"):]
-	if len(key) == 0 {
-		http.Error(w, "key cannot be empty", http.StatusBadRequest)
-		return
-	}
-
 	err = s.storage.Set(key, string(value))
 	if err != nil {
 		msg := fmt.Sprintf("unable to set key: %v", err)
