@@ -9,9 +9,24 @@ import (
 	"github.com/st3v3nmw/little-key-value/internal/storage"
 )
 
+// Storage defines the interface for a generic key-value storage system
+type Storage interface {
+	// Set adds or updates a key-value pair in the storage
+	Set(key string, value string) error
+
+	// Get retrieves the value associated with a given key
+	Get(key string) (string, error)
+
+	// Delete removes a key-value pair from the storage
+	Delete(key string) error
+
+	// Clear removes all key-value pairs from the storage
+	Clear() error
+}
+
 // Server represents the key-value server
 type Server struct {
-	storage storage.Storage
+	storage Storage
 }
 
 // New creates a new instance of the Server
@@ -35,6 +50,15 @@ func (s *Server) Serve(addr string) error {
 			s.get(w, r)
 		case http.MethodDelete:
 			s.delete(w, r)
+		default:
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		}
+	})
+
+	http.HandleFunc("/clear", func(w http.ResponseWriter, r *http.Request) {
+		switch r.Method {
+		case http.MethodDelete:
+			s.clear(w, r)
 		default:
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		}
@@ -91,6 +115,18 @@ func (s *Server) delete(w http.ResponseWriter, r *http.Request) {
 	err := s.storage.Delete(key)
 	if err != nil {
 		msg := fmt.Sprintf("unable to delete key: %v", err)
+		http.Error(w, msg, http.StatusInternalServerError)
+		return
+	}
+
+	w.WriteHeader(http.StatusOK)
+}
+
+// clear handles the HTTP POST request for clearing the storage
+func (s *Server) clear(w http.ResponseWriter, _ *http.Request) {
+	err := s.storage.Clear()
+	if err != nil {
+		msg := fmt.Sprintf("unable to clear storage: %v", err)
 		http.Error(w, msg, http.StatusInternalServerError)
 		return
 	}

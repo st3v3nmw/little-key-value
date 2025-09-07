@@ -47,3 +47,12 @@ func (m *MapStorage) Delete(key string) error {
 	delete(m.data, key)
 	return nil
 }
+
+// Clear removes all key-value pairs from the storage
+func (m *MapStorage) Clear() error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	clear(m.data)
+	return nil
+}

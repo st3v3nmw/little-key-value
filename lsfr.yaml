@@ -1,5 +1,5 @@
 challenge: kv-store
 stages:
-  current: http-api
+  current: persistence
   completed:
   - http-api
