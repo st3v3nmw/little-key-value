@@ -24,3 +24,6 @@ go.work.sum
 # AI tooling
 .claude/
 .sourcerer/
+
+# Tests
+.lsfr/

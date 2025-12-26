@@ -1,42 +1,47 @@
 package api
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"io"
 	"net/http"
 
-	"github.com/st3v3nmw/little-key-value/internal/storage"
+	"github.com/st3v3nmw/little-key-value/internal/store"
 )
 
-// Storage defines the interface for a generic key-value storage system
-type Storage interface {
-	// Set adds or updates a key-value pair in the storage
+// Store defines the interface for a generic key-value store.
+type Store interface {
+	// Set adds or updates a key-value pair in the store.
 	Set(key string, value string) error
 
-	// Get retrieves the value associated with a given key
+	// Get retrieves the value associated with a given key.
 	Get(key string) (string, error)
 
-	// Delete removes a key-value pair from the storage
+	// Delete removes a key-value pair from the store.
 	Delete(key string) error
 
-	// Clear removes all key-value pairs from the storage
+	// Clear removes all key-value pairs from the store.
 	Clear() error
+
+	Close() error
 }
 
-// Server represents the key-value server
+// Server represents the key-value server.
 type Server struct {
-	storage Storage
+	api   *http.Server
+	store Store
 }
 
-// New creates a new instance of the Server
-func New() *Server {
-	return &Server{storage: storage.NewMapStorage()}
+// New creates a new instance of the Server.
+func New(store Store) *Server {
+	return &Server{store: store}
 }
 
-// Serve starts the HTTP server and handles key-value store operations
+// Serve starts the HTTP server and handles key-value store operations.
 func (s *Server) Serve(addr string) error {
-	http.HandleFunc("/kv/", func(w http.ResponseWriter, r *http.Request) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/kv/", func(w http.ResponseWriter, r *http.Request) {
 		key := r.URL.Path[len("/kv/"):]
 		if len(key) == 0 {
 			http.Error(w, "key cannot be empty", http.StatusBadRequest)
@@ -55,7 +60,7 @@ func (s *Server) Serve(addr string) error {
 		}
 	})
 
-	http.HandleFunc("/clear", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("/clear", func(w http.ResponseWriter, r *http.Request) {
 		switch r.Method {
 		case http.MethodDelete:
 			s.clear(w, r)
@@ -64,10 +69,12 @@ func (s *Server) Serve(addr string) error {
 		}
 	})
 
-	return http.ListenAndServe(addr, nil)
+	s.api = &http.Server{Addr: addr, Handler: mux}
+
+	return s.api.ListenAndServe()
 }
 
-// set handles the HTTP PUT request for setting a key-value pair
+// set handles the HTTP PUT request for setting a key-value pair.
 func (s *Server) set(w http.ResponseWriter, r *http.Request) {
 	value, err := io.ReadAll(r.Body)
 	if err != nil {
@@ -81,7 +88,7 @@ func (s *Server) set(w http.ResponseWriter, r *http.Request) {
 	}
 
 	key := r.URL.Path[len("/kv/"):]
-	err = s.storage.Set(key, string(value))
+	err = s.store.Set(key, string(value))
 	if err != nil {
 		msg := fmt.Sprintf("unable to set key: %v", err)
 		http.Error(w, msg, http.StatusInternalServerError)
@@ -91,12 +98,12 @@ func (s *Server) set(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusOK)
 }
 
-// get handles the HTTP GET request for retrieving a key-value pair
+// get handles the HTTP GET request for retrieving a key-value pair.
 func (s *Server) get(w http.ResponseWriter, r *http.Request) {
 	key := r.URL.Path[len("/kv/"):]
-	value, err := s.storage.Get(key)
+	value, err := s.store.Get(key)
 	if err != nil {
-		if errors.Is(err, &storage.NotFoundError{}) {
+		if errors.Is(err, &store.NotFoundError{}) {
 			http.Error(w, err.Error(), http.StatusNotFound)
 			return
 		}
@@ -109,10 +116,10 @@ func (s *Server) get(w http.ResponseWriter, r *http.Request) {
 	w.Write([]byte(value))
 }
 
-// delete handles the HTTP DELETE request for deleting a key-value pair
+// delete handles the HTTP DELETE request for deleting a key-value pair.
 func (s *Server) delete(w http.ResponseWriter, r *http.Request) {
 	key := r.URL.Path[len("/kv/"):]
-	err := s.storage.Delete(key)
+	err := s.store.Delete(key)
 	if err != nil {
 		msg := fmt.Sprintf("unable to delete key: %v", err)
 		http.Error(w, msg, http.StatusInternalServerError)
@@ -122,14 +129,18 @@ func (s *Server) delete(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusOK)
 }
 
-// clear handles the HTTP POST request for clearing the storage
+// clear handles the HTTP POST request for clearing the store.
 func (s *Server) clear(w http.ResponseWriter, _ *http.Request) {
-	err := s.storage.Clear()
+	err := s.store.Clear()
 	if err != nil {
-		msg := fmt.Sprintf("unable to clear storage: %v", err)
+		msg := fmt.Sprintf("unable to clear sore: %v", err)
 		http.Error(w, msg, http.StatusInternalServerError)
 		return
 	}
 
 	w.WriteHeader(http.StatusOK)
+}
+
+func (s *Server) Shutdown(ctx context.Context) error {
+	return s.api.Shutdown(ctx)
 }
