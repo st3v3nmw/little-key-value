@@ -1,4 +1,4 @@
-package storage
+package store
 
 // NotFoundError is a custom error type for when a key is not found
 // It implements the standard error interface
