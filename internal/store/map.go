@@ -13,9 +13,7 @@ type MapStore struct {
 
 // NewMapStore creates a new instance of MapStore.
 func NewMapStore() *MapStore {
-	return &MapStore{
-		data: map[string]string{},
-	}
+	return &MapStore{data: map[string]string{}}
 }
 
 // Set adds or updates a key-value pair in the store.
@@ -24,6 +22,7 @@ func (m *MapStore) Set(key string, value string) error {
 	defer m.mu.Unlock()
 
 	m.data[key] = value
+
 	return nil
 }
 
@@ -36,6 +35,7 @@ func (m *MapStore) Get(key string) (string, error) {
 	if !ok {
 		return "", &NotFoundError{}
 	}
+
 	return value, nil
 }
 
@@ -45,6 +45,7 @@ func (m *MapStore) Delete(key string) error {
 	defer m.mu.Unlock()
 
 	delete(m.data, key)
+
 	return nil
 }
 
@@ -54,9 +55,11 @@ func (m *MapStore) Clear() error {
 	defer m.mu.Unlock()
 
 	clear(m.data)
+
 	return nil
 }
 
+// Close performs a clean shutdown of the store.
 func (m *MapStore) Close() error {
 	return nil
 }

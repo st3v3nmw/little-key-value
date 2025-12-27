@@ -24,6 +24,7 @@ type Store interface {
 	// Clear removes all key-value pairs from the store.
 	Clear() error
 
+	// Close performs a clean shutdown of the store.
 	Close() error
 }
 
@@ -141,6 +142,7 @@ func (s *Server) clear(w http.ResponseWriter, _ *http.Request) {
 	w.WriteHeader(http.StatusOK)
 }
 
+// Shutdown gracefully shuts down the server.
 func (s *Server) Shutdown(ctx context.Context) error {
 	return s.api.Shutdown(ctx)
 }
