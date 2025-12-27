@@ -10,12 +10,14 @@ import (
 	"sync"
 )
 
+// LogEntry represents a single operation in the log.
 type LogEntry struct {
 	Op    string `json:"op"` // "set", "delete", "clear"
 	Key   string `json:"key,omitempty"`
 	Value string `json:"value,omitempty"`
 }
 
+// PersistentStore provides durable storage that survives restarts.
 type PersistentStore struct {
 	store *MapStore
 
@@ -26,6 +28,8 @@ type PersistentStore struct {
 	mu           sync.Mutex // protects file I/O
 }
 
+// NewPersistentStore creates a new persistent store that saves data to the specified directory.
+// Any previously saved state is restored on initialization.
 func NewPersistentStore(workingDir string) (*PersistentStore, error) {
 	_, err := os.Stat(workingDir)
 	if os.IsNotExist(err) {
@@ -65,6 +69,7 @@ func NewPersistentStore(workingDir string) (*PersistentStore, error) {
 	return ps, nil
 }
 
+// loadSnapshot restores the store's state from disk.
 func (ps *PersistentStore) loadSnapshot() error {
 	data, err := os.ReadFile(ps.snapshotPath)
 	if err != nil {
@@ -90,18 +95,14 @@ func (ps *PersistentStore) loadSnapshot() error {
 	return nil
 }
 
+// saveSnapshot captures the current state to disk.
 func (ps *PersistentStore) saveSnapshot() error {
 	ps.store.mu.RLock()
-	snapshot := make(map[string]string, len(ps.store.data))
-	for key, value := range ps.store.data {
-		snapshot[key] = value
-	}
-	ps.store.mu.RUnlock()
-
-	data, err := json.MarshalIndent(snapshot, "", "  ")
+	data, err := json.MarshalIndent(ps.store.data, "", "  ")
 	if err != nil {
 		return fmt.Errorf("failed to marshal snapshot: %w", err)
 	}
+	ps.store.mu.RUnlock()
 
 	err = os.WriteFile(ps.snapshotPath, data, 0644)
 	if err != nil {
@@ -111,6 +112,7 @@ func (ps *PersistentStore) saveSnapshot() error {
 	return nil
 }
 
+// replay recovers operations from the log.
 func (ps *PersistentStore) replay() error {
 	f, err := os.Open(ps.logPath)
 	if err != nil {
@@ -123,9 +125,8 @@ func (ps *PersistentStore) replay() error {
 	}
 	defer f.Close()
 
-	scanner := bufio.NewScanner(f)
 	lineNum := 0
-
+	scanner := bufio.NewScanner(f)
 	for scanner.Scan() {
 		lineNum++
 		line := scanner.Text()
@@ -161,6 +162,7 @@ func (ps *PersistentStore) replay() error {
 	return nil
 }
 
+// appendLog records an operation to the log.
 func (ps *PersistentStore) appendLog(entry LogEntry) error {
 	ps.mu.Lock()
 	defer ps.mu.Unlock()
@@ -178,6 +180,7 @@ func (ps *PersistentStore) appendLog(entry LogEntry) error {
 	return nil
 }
 
+// Set adds or updates a key-value pair in the store.
 func (ps *PersistentStore) Set(key, value string) error {
 	err := ps.appendLog(LogEntry{Op: "set", Key: key, Value: value})
 	if err != nil {
@@ -187,10 +190,12 @@ func (ps *PersistentStore) Set(key, value string) error {
 	return ps.store.Set(key, value)
 }
 
+// Get retrieves the value associated with a given key.
 func (ps *PersistentStore) Get(key string) (string, error) {
 	return ps.store.Get(key)
 }
 
+// Delete removes a key-value pair from the store.
 func (ps *PersistentStore) Delete(key string) error {
 	err := ps.appendLog(LogEntry{Op: "delete", Key: key})
 	if err != nil {
@@ -200,6 +205,7 @@ func (ps *PersistentStore) Delete(key string) error {
 	return ps.store.Delete(key)
 }
 
+// Clear removes all key-value pairs from the store.
 func (ps *PersistentStore) Clear() error {
 	err := ps.appendLog(LogEntry{Op: "clear"})
 	if err != nil {
@@ -209,6 +215,7 @@ func (ps *PersistentStore) Clear() error {
 	return ps.store.Clear()
 }
 
+// Close performs a clean shutdown of the store.
 func (ps *PersistentStore) Close() error {
 	err := ps.saveSnapshot()
 	if err != nil {
