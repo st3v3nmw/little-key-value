@@ -1,5 +1,6 @@
 challenge: kv-store
 stages:
-  current: persistence
+  current: crash-recovery
   completed:
   - http-api
+  - persistence
