@@ -29,12 +29,12 @@ func main() {
 		log.Fatal("--working-dir parameter is required")
 	}
 
-	sto, err := store.NewPersistentStore(*workingDir)
+	ds, err := store.NewDiskStore(*workingDir)
 	if err != nil {
-		log.Fatalf("failed to create persistent store: %v", err)
+		log.Fatalf("failed to create disk store: %v", err)
 	}
 
-	server := api.New(sto)
+	server := api.New(ds)
 
 	go func() {
 		err = server.Serve(":" + *port)
@@ -59,7 +59,7 @@ func main() {
 		log.Printf("error while shutting down: %v", err)
 	}
 
-	err = sto.Close()
+	err = ds.Close()
 	if err != nil {
 		log.Printf("failed to close log: %v", err)
 	}

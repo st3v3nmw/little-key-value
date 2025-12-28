@@ -31,9 +31,9 @@ type batchRequest struct {
 	errChan chan error
 }
 
-// PersistentStore provides durable storage that survives restarts.
-type PersistentStore struct {
-	mem *MapStore
+// DiskStore provides durable storage that survives restarts.
+type DiskStore struct {
+	memory *MemoryStore
 
 	workingDir   string
 	snapshotPath string
@@ -51,9 +51,9 @@ type PersistentStore struct {
 	closeOnce sync.Once
 }
 
-// NewPersistentStore creates a new persistent store that saves data to the specified directory.
+// NewDiskStore creates a new persistent store that saves data to the specified directory.
 // Any previously saved state is restored on initialization.
-func NewPersistentStore(workingDir string) (*PersistentStore, error) {
+func NewDiskStore(workingDir string) (*DiskStore, error) {
 	snapshotPath := filepath.Join(workingDir, "snapshot.json")
 	logPath := filepath.Join(workingDir, "wal.jsonl")
 
@@ -62,8 +62,8 @@ func NewPersistentStore(workingDir string) (*PersistentStore, error) {
 		return nil, fmt.Errorf("failed to open WAL file: %w", err)
 	}
 
-	ps := &PersistentStore{
-		mem:          NewMapStore(),
+	ds := &DiskStore{
+		memory:       NewMemoryStore(),
 		workingDir:   workingDir,
 		snapshotPath: snapshotPath,
 		walPath:      logPath,
@@ -72,28 +72,28 @@ func NewPersistentStore(workingDir string) (*PersistentStore, error) {
 		batchDone:    make(chan struct{}),
 	}
 
-	err = ps.loadSnapshot()
+	err = ds.loadSnapshot()
 	if err != nil {
 		logFile.Close()
 
 		return nil, fmt.Errorf("failed to load snapshot: %w", err)
 	}
 
-	err = ps.replayWAL()
+	err = ds.replayWAL()
 	if err != nil {
 		logFile.Close()
 
 		return nil, fmt.Errorf("failed to replay WAL: %w", err)
 	}
 
-	go ps.batchWriter()
+	go ds.batchWriter()
 
-	return ps, nil
+	return ds, nil
 }
 
 // loadSnapshot restores the store's state from disk.
-func (ps *PersistentStore) loadSnapshot() error {
-	data, err := os.ReadFile(ps.snapshotPath)
+func (ds *DiskStore) loadSnapshot() error {
+	data, err := os.ReadFile(ds.snapshotPath)
 	if err != nil {
 		if os.IsNotExist(err) {
 			// No snapshot yet, start with empty store
@@ -109,21 +109,21 @@ func (ps *PersistentStore) loadSnapshot() error {
 		return fmt.Errorf("failed to unmarshal snapshot: %w", err)
 	}
 
-	ps.mem.data = snapshot
+	ds.memory.data = snapshot
 
 	return nil
 }
 
 // saveSnapshot captures the current state to disk.
-func (ps *PersistentStore) saveSnapshot() error {
-	ps.mem.mu.RLock()
-	data, err := json.MarshalIndent(ps.mem.data, "", "  ")
+func (ds *DiskStore) saveSnapshot() error {
+	ds.memory.mu.RLock()
+	data, err := json.MarshalIndent(ds.memory.data, "", "  ")
 	if err != nil {
 		return fmt.Errorf("failed to marshal snapshot: %w", err)
 	}
-	ps.mem.mu.RUnlock()
+	ds.memory.mu.RUnlock()
 
-	err = os.WriteFile(ps.snapshotPath, data, 0644)
+	err = os.WriteFile(ds.snapshotPath, data, 0644)
 	if err != nil {
 		return fmt.Errorf("failed to write snapshot: %w", err)
 	}
@@ -132,8 +132,8 @@ func (ps *PersistentStore) saveSnapshot() error {
 }
 
 // replayWAL recovers operations from the WAL.
-func (ps *PersistentStore) replayWAL() error {
-	f, err := os.Open(ps.walPath)
+func (ds *DiskStore) replayWAL() error {
+	f, err := os.Open(ds.walPath)
 	if err != nil {
 		if os.IsNotExist(err) {
 			return nil
@@ -162,11 +162,11 @@ func (ps *PersistentStore) replayWAL() error {
 
 		switch entry.Op {
 		case "set":
-			ps.mem.Set(entry.Key, entry.Value)
+			ds.memory.Set(entry.Key, entry.Value)
 		case "delete":
-			ps.mem.Delete(entry.Key)
+			ds.memory.Delete(entry.Key)
 		case "clear":
-			ps.mem.Clear()
+			ds.memory.Clear()
 		default:
 			log.Printf("unknown operation %q on line %d", entry.Op, lineNum)
 		}
@@ -181,20 +181,20 @@ func (ps *PersistentStore) replayWAL() error {
 }
 
 // batchWriter runs in the background to batch WAL writes and fsync.
-func (ps *PersistentStore) batchWriter() {
+func (ds *DiskStore) batchWriter() {
 	batch := make([]*batchRequest, 0, maxBatchSize)
 	ticker := time.NewTicker(flushInterval)
 	defer ticker.Stop()
 
 	for {
 		select {
-		case req, ok := <-ps.batchChan:
+		case req, ok := <-ds.batchChan:
 			if !ok {
 				if len(batch) > 0 {
-					ps.flushBatch(batch)
+					ds.flushBatch(batch)
 				}
 
-				close(ps.batchDone)
+				close(ds.batchDone)
 
 				return
 			}
@@ -202,12 +202,12 @@ func (ps *PersistentStore) batchWriter() {
 			batch = append(batch, req)
 
 			if len(batch) >= maxBatchSize {
-				ps.flushBatch(batch)
+				ds.flushBatch(batch)
 				batch = batch[:0]
 			}
 		case <-ticker.C:
 			if len(batch) > 0 {
-				ps.flushBatch(batch)
+				ds.flushBatch(batch)
 				batch = batch[:0]
 			}
 		}
@@ -215,9 +215,9 @@ func (ps *PersistentStore) batchWriter() {
 }
 
 // flushBatch writes all entries in the batch and performs a single fsync.
-func (ps *PersistentStore) flushBatch(batch []*batchRequest) {
-	ps.ioMu.Lock()
-	defer ps.ioMu.Unlock()
+func (ds *DiskStore) flushBatch(batch []*batchRequest) {
+	ds.ioMu.Lock()
+	defer ds.ioMu.Unlock()
 
 	var writeErr error
 	for _, req := range batch {
@@ -227,7 +227,7 @@ func (ps *PersistentStore) flushBatch(batch []*batchRequest) {
 			break
 		}
 
-		_, err = ps.wal.Write(append(data, '\n'))
+		_, err = ds.wal.Write(append(data, '\n'))
 		if err != nil {
 			writeErr = fmt.Errorf("failed to write to WAL: %w", err)
 			break
@@ -236,7 +236,7 @@ func (ps *PersistentStore) flushBatch(batch []*batchRequest) {
 
 	var syncErr error
 	if writeErr == nil {
-		syncErr = ps.wal.Sync()
+		syncErr = ds.wal.Sync()
 		if syncErr != nil {
 			syncErr = fmt.Errorf("failed to sync WAL: %w", syncErr)
 		}
@@ -253,54 +253,54 @@ func (ps *PersistentStore) flushBatch(batch []*batchRequest) {
 }
 
 // checkpoint creates a snapshot and truncates the WAL.
-func (ps *PersistentStore) checkpoint() error {
-	defer ps.checkpointing.Store(false)
+func (ds *DiskStore) checkpoint() error {
+	defer ds.checkpointing.Store(false)
 
-	ps.checkpointMu.Lock()
-	defer ps.checkpointMu.Unlock()
+	ds.checkpointMu.Lock()
+	defer ds.checkpointMu.Unlock()
 
-	ps.ioMu.Lock()
-	defer ps.ioMu.Unlock()
+	ds.ioMu.Lock()
+	defer ds.ioMu.Unlock()
 
-	err := ps.saveSnapshot()
+	err := ds.saveSnapshot()
 	if err != nil {
 		return fmt.Errorf("checkpoint failed: %w", err)
 	}
 
-	err = ps.wal.Close()
+	err = ds.wal.Close()
 	if err != nil {
 		return fmt.Errorf("failed to close WAL during checkpoint: %w", err)
 	}
 
-	err = os.Truncate(ps.walPath, 0)
+	err = os.Truncate(ds.walPath, 0)
 	if err != nil {
 		return fmt.Errorf("failed to truncate WAL during checkpoint: %w", err)
 	}
 
-	ps.wal, err = os.OpenFile(ps.walPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+	ds.wal, err = os.OpenFile(ds.walPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
 	if err != nil {
 		return fmt.Errorf("failed to reopen WAL during checkpoint: %w", err)
 	}
 
-	ps.opCount.Store(0)
+	ds.opCount.Store(0)
 
 	return nil
 }
 
 // appendToWAL records an operation to the WAL.
-func (ps *PersistentStore) appendToWAL(entry LogEntry) error {
+func (ds *DiskStore) appendToWAL(entry LogEntry) error {
 	req := &batchRequest{entry: entry, errChan: make(chan error, 1)}
-	ps.batchChan <- req
+	ds.batchChan <- req
 
 	err := <-req.errChan
 	if err != nil {
 		return err
 	}
 
-	newCount := ps.opCount.Add(1)
-	if newCount%opsPerCheckpoint == 0 && ps.checkpointing.CompareAndSwap(false, true) {
+	newCount := ds.opCount.Add(1)
+	if newCount%opsPerCheckpoint == 0 && ds.checkpointing.CompareAndSwap(false, true) {
 		go func() {
-			err := ps.checkpoint()
+			err := ds.checkpoint()
 			if err != nil {
 				log.Printf("checkpoint failed: %v", err)
 			}
@@ -311,75 +311,75 @@ func (ps *PersistentStore) appendToWAL(entry LogEntry) error {
 }
 
 // Set adds or updates a key-value pair in the store.
-func (ps *PersistentStore) Set(key, value string) error {
-	ps.checkpointMu.RLock()
-	defer ps.checkpointMu.RUnlock()
+func (ds *DiskStore) Set(key, value string) error {
+	ds.checkpointMu.RLock()
+	defer ds.checkpointMu.RUnlock()
 
-	err := ps.appendToWAL(LogEntry{Op: "set", Key: key, Value: value})
+	err := ds.appendToWAL(LogEntry{Op: "set", Key: key, Value: value})
 	if err != nil {
 		return err
 	}
 
-	return ps.mem.Set(key, value)
+	return ds.memory.Set(key, value)
 }
 
 // Get retrieves the value associated with a given key.
-func (ps *PersistentStore) Get(key string) (string, error) {
-	return ps.mem.Get(key)
+func (ds *DiskStore) Get(key string) (string, error) {
+	return ds.memory.Get(key)
 }
 
 // Delete removes a key-value pair from the store.
-func (ps *PersistentStore) Delete(key string) error {
-	ps.checkpointMu.RLock()
-	defer ps.checkpointMu.RUnlock()
+func (ds *DiskStore) Delete(key string) error {
+	ds.checkpointMu.RLock()
+	defer ds.checkpointMu.RUnlock()
 
-	err := ps.appendToWAL(LogEntry{Op: "delete", Key: key})
+	err := ds.appendToWAL(LogEntry{Op: "delete", Key: key})
 	if err != nil {
 		return err
 	}
 
-	return ps.mem.Delete(key)
+	return ds.memory.Delete(key)
 }
 
 // Clear removes all key-value pairs from the store.
-func (ps *PersistentStore) Clear() error {
-	ps.checkpointMu.RLock()
-	defer ps.checkpointMu.RUnlock()
+func (ds *DiskStore) Clear() error {
+	ds.checkpointMu.RLock()
+	defer ds.checkpointMu.RUnlock()
 
-	err := ps.appendToWAL(LogEntry{Op: "clear"})
+	err := ds.appendToWAL(LogEntry{Op: "clear"})
 	if err != nil {
 		return err
 	}
 
-	return ps.mem.Clear()
+	return ds.memory.Clear()
 }
 
 // Close performs a clean shutdown of the store.
-func (ps *PersistentStore) Close() error {
+func (ds *DiskStore) Close() error {
 	var closeErr error
 
-	ps.closeOnce.Do(func() {
-		close(ps.batchChan)
-		<-ps.batchDone
+	ds.closeOnce.Do(func() {
+		close(ds.batchChan)
+		<-ds.batchDone
 
-		ps.checkpointMu.Lock()
-		defer ps.checkpointMu.Unlock()
+		ds.checkpointMu.Lock()
+		defer ds.checkpointMu.Unlock()
 
-		err := ps.saveSnapshot()
+		err := ds.saveSnapshot()
 		if err != nil {
 			log.Printf("failed to save snapshot: %v", err)
 			closeErr = err
 		}
 
-		ps.ioMu.Lock()
-		err = ps.wal.Close()
-		ps.ioMu.Unlock()
+		ds.ioMu.Lock()
+		err = ds.wal.Close()
+		ds.ioMu.Unlock()
 		if err != nil {
 			closeErr = err
 			return
 		}
 
-		err = os.Truncate(ps.walPath, 0)
+		err = os.Truncate(ds.walPath, 0)
 		if err != nil {
 			log.Printf("failed to truncate WAL: %v", err)
 		}
