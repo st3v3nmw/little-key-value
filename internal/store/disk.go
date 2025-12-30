@@ -39,7 +39,7 @@ type DiskStore struct {
 	snapshotPath string
 	walPath      string
 	wal          *os.File
-	ioMu         sync.Mutex // serializes access to the WAL file descriptor
+	walMu        sync.Mutex // serializes access to the WAL
 
 	batchChan chan *batchRequest
 	batchDone chan struct{}
@@ -214,8 +214,8 @@ func (ds *DiskStore) batchWriter() {
 
 // flushBatch writes all entries in the batch and performs a single fsync.
 func (ds *DiskStore) flushBatch(batch []*batchRequest) {
-	ds.ioMu.Lock()
-	defer ds.ioMu.Unlock()
+	ds.walMu.Lock()
+	defer ds.walMu.Unlock()
 
 	var writeErr error
 	for _, req := range batch {
@@ -257,8 +257,8 @@ func (ds *DiskStore) checkpoint() error {
 	ds.checkpointMu.Lock()
 	defer ds.checkpointMu.Unlock()
 
-	ds.ioMu.Lock()
-	defer ds.ioMu.Unlock()
+	ds.walMu.Lock()
+	defer ds.walMu.Unlock()
 
 	err := ds.saveSnapshot()
 	if err != nil {
@@ -369,9 +369,9 @@ func (ds *DiskStore) Close() error {
 			closeErr = err
 		}
 
-		ds.ioMu.Lock()
+		ds.walMu.Lock()
 		err = ds.wal.Close()
-		ds.ioMu.Unlock()
+		ds.walMu.Unlock()
 		if err != nil {
 			closeErr = err
 			return
