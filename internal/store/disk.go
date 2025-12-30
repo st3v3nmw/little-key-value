@@ -75,14 +75,12 @@ func NewDiskStore(workingDir string) (*DiskStore, error) {
 	err = ds.loadSnapshot()
 	if err != nil {
 		logFile.Close()
-
 		return nil, fmt.Errorf("failed to load snapshot: %w", err)
 	}
 
 	err = ds.replayWAL()
 	if err != nil {
 		logFile.Close()
-
 		return nil, fmt.Errorf("failed to replay WAL: %w", err)
 	}
 

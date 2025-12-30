@@ -32,11 +32,15 @@ type Store interface {
 type Server struct {
 	api   *http.Server
 	store Store
+	stats *requestStats
 }
 
 // New creates a new instance of the Server.
 func New(store Store) *Server {
-	return &Server{store: store}
+	return &Server{
+		store: store,
+		stats: newRequestStats(),
+	}
 }
 
 // Serve starts the HTTP server and handles key-value store operations.
@@ -70,7 +74,7 @@ func (s *Server) Serve(addr string) error {
 		}
 	})
 
-	s.api = &http.Server{Addr: addr, Handler: mux}
+	s.api = &http.Server{Addr: addr, Handler: loggingMiddleware(s.stats)(mux)}
 
 	return s.api.ListenAndServe()
 }
@@ -145,4 +149,9 @@ func (s *Server) clear(w http.ResponseWriter, _ *http.Request) {
 // Shutdown gracefully shuts down the server.
 func (s *Server) Shutdown(ctx context.Context) error {
 	return s.api.Shutdown(ctx)
+}
+
+// PrintStats prints aggregate request statistics.
+func (s *Server) PrintStats() {
+	s.stats.printStats()
 }

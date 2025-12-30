@@ -59,6 +59,8 @@ func main() {
 		log.Printf("error while shutting down: %v", err)
 	}
 
+	server.PrintStats()
+
 	err = ds.Close()
 	if err != nil {
 		log.Printf("failed to close log: %v", err)
