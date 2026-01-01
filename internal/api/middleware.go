@@ -31,6 +31,10 @@ type routeStats struct {
 }
 
 // requestStats tracks aggregate statistics for all requests.
+// This provides observability into performance characteristics:
+//   - Avg/min/max latencies reveal batching behavior under different loads
+//   - Status code distributions help identify validation vs server errors
+//   - Per-route stats show which operations dominate the workload
 type requestStats struct {
 	mu     sync.Mutex
 	routes map[string]*routeStats
@@ -43,6 +47,8 @@ func newRequestStats() *requestStats {
 }
 
 // normalizeRoute converts a full path to a route pattern.
+// This aggregates stats across all keys (e.g., /kv/user:123 → /kv/)
+// so we can see overall GET/PUT/DELETE performance rather than per-key metrics.
 func normalizeRoute(path string) string {
 	if strings.HasPrefix(path, "/kv/") {
 		return "/kv/"
