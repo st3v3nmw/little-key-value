@@ -6,8 +6,19 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"regexp"
 
 	"github.com/st3v3nmw/little-key-value/internal/store"
+)
+
+const (
+	// maxValueSize limits the size of values to prevent DoS attacks (10 MB)
+	maxValueSize = 10 * 1024 * 1024
+)
+
+var (
+	// keyPattern validates that keys contain only allowed characters
+	keyPattern = regexp.MustCompile(`^[a-zA-Z0-9:_.-]+$`)
 )
 
 // Store defines the interface for a generic key-value store.
@@ -53,6 +64,11 @@ func (s *Server) Serve(addr string) error {
 			return
 		}
 
+		if !keyPattern.MatchString(key) {
+			http.Error(w, "key contains invalid characters", http.StatusBadRequest)
+			return
+		}
+
 		switch r.Method {
 		case http.MethodPut:
 			s.set(w, r)
@@ -81,6 +97,8 @@ func (s *Server) Serve(addr string) error {
 
 // set handles the HTTP PUT request for setting a key-value pair.
 func (s *Server) set(w http.ResponseWriter, r *http.Request) {
+	r.Body = http.MaxBytesReader(w, r.Body, maxValueSize)
+
 	value, err := io.ReadAll(r.Body)
 	if err != nil {
 		msg := fmt.Sprintf("unable to read request body: %v", err)
@@ -138,7 +156,7 @@ func (s *Server) delete(w http.ResponseWriter, r *http.Request) {
 func (s *Server) clear(w http.ResponseWriter, _ *http.Request) {
 	err := s.store.Clear()
 	if err != nil {
-		msg := fmt.Sprintf("unable to clear sore: %v", err)
+		msg := fmt.Sprintf("unable to clear store: %v", err)
 		http.Error(w, msg, http.StatusInternalServerError)
 		return
 	}
