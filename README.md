@@ -46,6 +46,8 @@ The API layer exposes the key-value store over HTTP with PUT, GET, DELETE, and C
 
 ## Performance
 
+### After Completing Stage 3
+
 Typical performance on modern hardware:
 
 | Operation          | Latency      | Notes                                         |
