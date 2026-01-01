@@ -14,7 +14,7 @@ import (
 
 const (
 	maxBatchSize     = 100
-	flushInterval    = 10 * time.Millisecond
+	flushInterval    = 50 * time.Millisecond
 	opsPerCheckpoint = 1_000
 )
 
@@ -115,7 +115,7 @@ func (ds *DiskStore) loadSnapshot() error {
 // saveSnapshot captures the current state to disk.
 func (ds *DiskStore) saveSnapshot() error {
 	ds.memory.mu.RLock()
-	data, err := json.MarshalIndent(ds.memory.data, "", "  ")
+	data, err := json.Marshal(ds.memory.data)
 	if err != nil {
 		return fmt.Errorf("failed to marshal snapshot: %w", err)
 	}
@@ -154,8 +154,7 @@ func (ds *DiskStore) replayWAL() error {
 		var entry LogEntry
 		err := json.Unmarshal([]byte(line), &entry)
 		if err != nil {
-			log.Printf("skipping corrupted WAL line %d: %v", lineNum, err)
-			continue
+			return fmt.Errorf("corrupted WAL entry at line %d: %w", lineNum, err)
 		}
 
 		switch entry.Op {
@@ -166,7 +165,7 @@ func (ds *DiskStore) replayWAL() error {
 		case "clear":
 			ds.memory.Clear()
 		default:
-			log.Printf("unknown operation %q on line %d", entry.Op, lineNum)
+			return fmt.Errorf("unknown operation %q at line %d", entry.Op, lineNum)
 		}
 	}
 
