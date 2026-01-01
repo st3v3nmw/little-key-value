@@ -13,7 +13,16 @@ func (e *NotFoundError) Error() string {
 }
 
 // MemoryStore is a simple in-memory implementation of the Store interface.
-// It uses a map to store key-value pairs.
+//
+// Concurrency model:
+//   - Uses sync.RWMutex for concurrent access
+//   - Multiple readers can access simultaneously (Get operations)
+//   - Writers (Set/Delete/Clear) acquire exclusive lock
+//   - Simple but effective for read-heavy workloads
+//
+// Trade-off: A single global lock is simpler than sharded maps but can become
+// a bottleneck under very high write concurrency.
+// For a reference implementation, the simplicity wins.
 type MemoryStore struct {
 	mu   sync.RWMutex
 	data map[string]string

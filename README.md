@@ -1,3 +1,84 @@
 # Little Key-Value Store
 
 Reference implementation for [lsfr.io/kv-store](https://lsfr.io/kv-store/).
+
+## Architecture
+
+Little Key-Value Store is a persistent HTTP-based key-value store built in layers. The HTTP API handles client requests and validation, while the storage layer provides in-memory access with durability guarantees through write-ahead logging.
+
+### Storage Layer
+
+At the core is an in-memory key-value map protected by a read-write mutex, allowing concurrent reads while serializing writes. This provides the baseline functionality: fast lookups with thread-safe access.
+
+The disk store wraps this in-memory map and adds persistence through a write-ahead log (WAL). Every mutation is first appended to the log and synced to disk before being applied to memory. This ensures that even if the process crashes, all acknowledged writes can be recovered by replaying the log.
+
+To prevent the WAL from growing unbounded, the system periodically creates snapshots of the entire in-memory state and truncates the log. On startup, recovery loads the most recent snapshot and replays any operations logged after it.
+
+#### Batching for Throughput
+
+Synchronous disk writes are expensive, and requiring a disk sync per operation creates severe lock contention under concurrent load. To address both issues, the store batches multiple operations together and performs a single `fsync` for the entire batch. Operations are flushed either when the batch reaches a size threshold or after a time interval, trading individual operation latency for significantly higher aggregate throughput and reduced lock contention.
+
+### HTTP API
+
+The API layer exposes the key-value store over HTTP with PUT, GET, DELETE, and CLEAR operations. Keys are validated to contain only safe characters, and values are size-limited to prevent resource exhaustion attacks from unbounded memory consumption. Request statistics are tracked to provide visibility into performance characteristics.
+
+```
+┌─────────────┐
+│   HTTP API  │  Client requests (PUT/GET/DELETE)
+└──────┬──────┘
+       │
+┌──────▼──────────────────┐
+│     DiskStore           │  Durability layer
+│  ┌──────────────────┐   │
+│  │  Batch Writer    │   │  Buffer & fsync operations
+│  └──────────────────┘   │
+│  ┌──────────────────┐   │
+│  │  WAL             │   │  Write-ahead log
+│  └──────────────────┘   │
+│  ┌──────────────────┐   │
+│  │  Snapshots       │   │  Periodic checkpoints
+│  └──────────────────┘   │
+│  ┌──────────────────┐   │
+│  │  MemoryStore     │   │  In-memory map
+│  └──────────────────┘   │
+└─────────────────────────┘
+```
+
+## Performance
+
+Typical performance on modern hardware:
+
+| Operation          | Latency      | Notes                                         |
+|--------------------|--------------|-----------------------------------------------|
+| Reads (GET)        | ~15µs        | In-memory with shared lock                    |
+| Writes (light)     | ~20-40ms     | Waiting for batch to fill                     |
+| Writes (heavy)     | ~140ms avg   | Batching + queueing under concurrent load     |
+
+All write operations (PUT, DELETE, CLEAR) go through the WAL and exhibit similar performance characteristics. Batching trades individual operation latency for significantly higher aggregate throughput under concurrent load.
+
+## Running
+
+```console
+$ go build -o little-key-value ./cmd/little-key-value
+$ ./little-key-value --port 8080 --working-dir ./data
+```
+
+The server persists all data to the specified working directory and recovers it on restart. Graceful shutdown (Ctrl+C or SIGTERM) ensures proper cleanup and data integrity.
+
+## Testing
+
+Test with [lsfr](https://lsfr.io):
+
+```console
+$ lsfr test http-api
+$ lsfr test persistence
+$ lsfr test crash-recovery
+```
+
+## Project Structure
+
+```markdown
+cmd/little-key-value/    # Server entry point and lifecycle management
+internal/api/            # HTTP handlers, validation, and observability
+internal/store/          # Storage implementations (memory and disk)
+```

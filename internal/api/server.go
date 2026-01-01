@@ -12,12 +12,13 @@ import (
 )
 
 const (
-	// maxValueSize limits the size of values to prevent DoS attacks (10 MB)
+	// maxValueSize limits the size of values to prevent DoS attacks (10 MB).
 	maxValueSize = 10 * 1024 * 1024
 )
 
 var (
-	// keyPattern validates that keys contain only allowed characters
+	// keyPattern validates that keys contain only alphanumeric plus : _ . - characters.
+	// This prevents path traversal issues.
 	keyPattern = regexp.MustCompile(`^[a-zA-Z0-9:_.-]+$`)
 )
 

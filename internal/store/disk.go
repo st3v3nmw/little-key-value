@@ -13,8 +13,20 @@ import (
 )
 
 const (
-	maxBatchSize     = 100
-	flushInterval    = 50 * time.Millisecond
+	// maxBatchSize limits how many operations we buffer before forcing an fsync.
+	// This prevents high latency under burst writes.
+	maxBatchSize = 100
+
+	// flushInterval is how long we wait before fsyncing a partial batch.
+	// 50ms balances latency and throughput:
+	// - Shorter (10ms): lower latency, less batching efficiency
+	// - Longer (200ms): higher throughput, worse tail latency
+	// This value works well for general-purpose workloads.
+	flushInterval = 50 * time.Millisecond
+
+	// opsPerCheckpoint determines when we create a snapshot and truncate the WAL.
+	// Every 1,000 operations keeps recovery time bounded.
+	// Note: More frequent checkpoints reduce recovery time but add I/O overhead.
 	opsPerCheckpoint = 1_000
 )
 
@@ -32,6 +44,17 @@ type batchRequest struct {
 }
 
 // DiskStore provides durable storage that survives restarts.
+//
+// Architecture:
+//   - Write-ahead log (WAL): All mutations are logged before applying to memory
+//   - Batching: Operations are batched and flushed together to amortize fsync cost
+//   - Checkpointing: Periodic snapshots prevent unbounded WAL growth
+//   - Recovery: Load latest snapshot, then replay WAL entries
+//
+// Locking strategy:
+//   - walMu: Serializes writes to the WAL file during batch flush
+//   - checkpointMu: RWMutex preventing checkpoint during write operations
+//     (readers = operations in flight - Set/Delete/Clear/etc, writer = checkpoint goroutine)
 type DiskStore struct {
 	memory *MemoryStore
 
@@ -39,14 +62,14 @@ type DiskStore struct {
 	snapshotPath string
 	walPath      string
 	wal          *os.File
-	walMu        sync.Mutex // serializes access to the WAL
+	walMu        sync.Mutex // serializes writes to WAL file
 
 	batchChan chan *batchRequest
 	batchDone chan struct{}
 
 	opCount       atomic.Int64
-	checkpointing atomic.Bool
-	checkpointMu  sync.RWMutex // ensures atomicity between memory and WAL updates
+	checkpointing atomic.Bool  // prevents concurrent checkpoints
+	checkpointMu  sync.RWMutex // prevents checkpoint while operations are in-flight
 
 	closeOnce sync.Once
 }
@@ -113,6 +136,11 @@ func (ds *DiskStore) loadSnapshot() error {
 }
 
 // saveSnapshot captures the current state to disk.
+//
+// Note: This writes directly to the snapshot file, which is not atomic.
+// If the process crashes mid-write, the snapshot may be corrupted.
+// Production systems use atomic renames: write to a temp file, fsync it,
+// then rename() to the final path.
 func (ds *DiskStore) saveSnapshot() error {
 	ds.memory.mu.RLock()
 	data, err := json.Marshal(ds.memory.data)
@@ -154,6 +182,7 @@ func (ds *DiskStore) replayWAL() error {
 		var entry LogEntry
 		err := json.Unmarshal([]byte(line), &entry)
 		if err != nil {
+			// Fail-fast on corruption rather than silently skipping entries.
 			return fmt.Errorf("corrupted WAL entry at line %d: %w", lineNum, err)
 		}
 
@@ -178,6 +207,12 @@ func (ds *DiskStore) replayWAL() error {
 }
 
 // batchWriter runs in the background to batch WAL writes and fsync.
+// This amortizes the expensive fsync call across multiple operations,
+// significantly improving throughput. We flush when either:
+//  1. The batch reaches maxBatchSize operations, OR
+//  2. flushInterval elapses with pending operations
+//
+// This trades individual operation latency for higher aggregate throughput.
 func (ds *DiskStore) batchWriter() {
 	batch := make([]*batchRequest, 0, maxBatchSize)
 	ticker := time.NewTicker(flushInterval)
@@ -250,6 +285,15 @@ func (ds *DiskStore) flushBatch(batch []*batchRequest) {
 }
 
 // checkpoint creates a snapshot and truncates the WAL.
+// This prevents unbounded WAL growth and keeps recovery time bounded.
+// The process is:
+//  1. Take checkpointMu write lock (blocks new operations)
+//  2. Snapshot current in-memory state
+//  3. Truncate WAL (all operations now in snapshot)
+//  4. Reset operation counter
+//
+// If checkpoint fails mid-way, we're left in a safe state: worst case is
+// a stale snapshot with extra WAL entries (safe to replay).
 func (ds *DiskStore) checkpoint() error {
 	defer ds.checkpointing.Store(false)
 
