@@ -1,6 +1,6 @@
 # Little Key-Value Store
 
-Reference implementation for [lsfr.io/kv-store](https://lsfr.io/kv-store/).
+Reference implementation for [lsfr's distributed key-value store challenge](https://lsfr.io/kv-store/).
 
 ## Architecture
 
