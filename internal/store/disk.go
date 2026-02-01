@@ -95,6 +95,9 @@ func NewDiskStore(workingDir string) (*DiskStore, error) {
 		batchDone:    make(chan struct{}),
 	}
 
+	// Clean up any stale temp file from a previous interrupted snapshot write.
+	os.Remove(snapshotPath + ".tmp")
+
 	err = ds.loadSnapshot()
 	if err != nil {
 		logFile.Close()
@@ -135,26 +138,17 @@ func (ds *DiskStore) loadSnapshot() error {
 	return nil
 }
 
-// saveSnapshot captures the current state to disk.
-//
-// Note: This writes directly to the snapshot file, which is not atomic.
-// If the process crashes mid-write, the snapshot may be corrupted.
-// Production systems use atomic renames: write to a temp file, fsync it,
-// then rename() to the final path.
+// saveSnapshot captures the current state to disk atomically.
 func (ds *DiskStore) saveSnapshot() error {
 	ds.memory.mu.RLock()
 	data, err := json.Marshal(ds.memory.data)
 	if err != nil {
+		ds.memory.mu.RUnlock()
 		return fmt.Errorf("failed to marshal snapshot: %w", err)
 	}
 	ds.memory.mu.RUnlock()
 
-	err = os.WriteFile(ds.snapshotPath, data, 0644)
-	if err != nil {
-		return fmt.Errorf("failed to write snapshot: %w", err)
-	}
-
-	return nil
+	return atomicWriteFile(ds.snapshotPath, data, 0644)
 }
 
 // replayWAL recovers operations from the WAL.
@@ -427,4 +421,56 @@ func (ds *DiskStore) Close() error {
 	})
 
 	return closeErr
+}
+
+// atomicWriteFile writes data to a file using a temp file + fsync + rename
+// pattern. This ensures readers never see a partially-written file.
+func atomicWriteFile(path string, data []byte, perm os.FileMode) error {
+	dir := filepath.Dir(path)
+	tmpPath := path + ".tmp"
+
+	f, err := os.OpenFile(tmpPath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, perm)
+	if err != nil {
+		return fmt.Errorf("failed to create temp file: %w", err)
+	}
+
+	_, err = f.Write(data)
+	if err != nil {
+		f.Close()
+		os.Remove(tmpPath)
+		return fmt.Errorf("failed to write temp file: %w", err)
+	}
+
+	err = f.Sync()
+	if err != nil {
+		f.Close()
+		os.Remove(tmpPath)
+		return fmt.Errorf("failed to fsync temp file: %w", err)
+	}
+
+	err = f.Close()
+	if err != nil {
+		os.Remove(tmpPath)
+		return fmt.Errorf("failed to close temp file: %w", err)
+	}
+
+	err = os.Rename(tmpPath, path)
+	if err != nil {
+		os.Remove(tmpPath)
+		return fmt.Errorf("failed to rename temp file: %w", err)
+	}
+
+	// Fsync the directory to ensure the directory entry is durable.
+	d, err := os.Open(dir)
+	if err != nil {
+		return fmt.Errorf("failed to open directory for fsync: %w", err)
+	}
+	defer d.Close()
+
+	err = d.Sync()
+	if err != nil {
+		return fmt.Errorf("failed to fsync directory: %w", err)
+	}
+
+	return nil
 }
