@@ -22,28 +22,6 @@ Synchronous disk writes are expensive, and requiring a disk sync per operation c
 
 The API layer exposes the key-value store over HTTP with PUT, GET, DELETE, and CLEAR operations. Keys are validated to contain only safe characters, and values are size-limited to prevent resource exhaustion attacks from unbounded memory consumption. Request statistics are tracked to provide visibility into performance characteristics.
 
-```
-┌─────────────┐
-│   HTTP API  │  Client requests (PUT/GET/DELETE)
-└──────┬──────┘
-       │
-┌──────▼──────────────────┐
-│     DiskStore           │  Durability layer
-│  ┌──────────────────┐   │
-│  │  Batch Writer    │   │  Buffer & fsync operations
-│  └──────────────────┘   │
-│  ┌──────────────────┐   │
-│  │  WAL             │   │  Write-ahead log
-│  └──────────────────┘   │
-│  ┌──────────────────┐   │
-│  │  Snapshots       │   │  Periodic checkpoints
-│  └──────────────────┘   │
-│  ┌──────────────────┐   │
-│  │  MemoryStore     │   │  In-memory map
-│  └──────────────────┘   │
-└─────────────────────────┘
-```
-
 ## Performance
 
 ### After Completing Stage 3
@@ -74,13 +52,5 @@ Test with [lsfr](https://lsfr.io):
 ```console
 $ lsfr test http-api
 $ lsfr test persistence
-$ lsfr test crash-recovery
-```
-
-## Project Structure
-
-```markdown
-cmd/little-key-value/    # Server entry point and lifecycle management
-internal/api/            # HTTP handlers, validation, and observability
-internal/store/          # Storage implementations (memory and disk)
+$ lsfr test <stage>
 ```
