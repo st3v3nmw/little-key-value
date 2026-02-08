@@ -1,6 +1,6 @@
 # Little Key-Value Store
 
-Reference implementation for [lsfr's distributed key-value store challenge](https://lsfr.io/kv-store/).
+Reference implementation for the [LittleClusters distributed key-value store challenge](https://littleclusters.com/).
 
 ## Architecture
 
@@ -47,10 +47,10 @@ The server persists all data to the specified working directory and recovers it 
 
 ## Testing
 
-Test with [lsfr](https://lsfr.io):
+Test with [lc](https://littleclusters.com/guides/cli/):
 
 ```console
-$ lsfr test http-api
-$ lsfr test persistence
-$ lsfr test <stage>
+$ lc test http-api
+$ lc test persistence
+$ lc test <stage>
 ```
